@@ -1,4 +1,6 @@
 class MACVendorLookup:
+    # Dicionário local de OUI (Organizationally Unique Identifier) para fabricantes conhecidos.
+    # Isso evita consultas online desnecessárias para MACs comuns.
     LOCAL_OUI = {
         '00:1A:2B': 'Cisco',
         '00:1B:63': 'Apple',
@@ -26,16 +28,24 @@ class MACVendorLookup:
 
     @staticmethod
     def get_vendor(mac):
+        """
+        Tenta determinar o fabricante de um dispositivo a partir de seu endereço MAC.
+        Primeiro verifica em um dicionário local, depois tenta uma consulta online.
+        """
         if not mac:
             return "Unknown"
         try:
+            # Normaliza o MAC address para o formato OUI (primeiros 3 octetos)
             oui = mac.upper().replace('-', ':').replace('.', ':').split(':')[:3]
             if len(oui) < 3:
                 return "Unknown"
             oui_str = ':'.join(oui)
+
+            # Tenta encontrar o fabricante no dicionário local
             if oui_str in MACVendorLookup.LOCAL_OUI:
                 return MACVendorLookup.LOCAL_OUI[oui_str]
-            # Consulta online (fallback)
+
+            # Se não encontrado localmente, tenta consulta online (fallback)
             import urllib.request
             url = f'https://api.macvendors.com/{"-".join(oui)}'
             try:
@@ -44,7 +54,9 @@ class MACVendorLookup:
                     if vendor:
                         return vendor
             except Exception:
+                # Ignora erros de consulta online (ex: sem conexão, tempo limite)
                 pass
         except Exception:
+            # Captura outras exceções durante o processamento do MAC
             pass
-        return "Unknown"
+        return "Unknown" # Retorna "Unknown" se o fabricante não puder ser determinado
