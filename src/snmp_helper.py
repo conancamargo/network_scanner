@@ -1,52 +1,83 @@
-import subprocess
-import re
+import json
+from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity
+import os
 
 class SNMPHelper:
-    # Dicionário de OIDs SNMP comuns com suas descrições amigáveis.
-    OIDS = {
-        'Descrição do Sistema': '1.3.6.1.2.1.1.1.0',
-        'Object ID': '1.3.6.1.2.1.1.2.0',
-        'Tempo de Atividade': '1.3.6.1.2.1.1.3.0',
-        'Nome SNMP': '1.3.6.1.2.1.1.5.0',
-        'Contato': '1.3.6.1.2.1.1.4.0',
-        'Localização': '1.3.6.1.2.1.1.1.6.0', # Corrigido: '1.3.6.1.2.1.1.6.0' (era 1.3.6.1.2.1.1.1.6.0)
-        'Serviços': '1.3.6.1.2.1.1.7.0',
-        'Número de Interfaces': '1.3.6.1.2.1.2.1.0',
-        'CPU Idle (%)': '1.3.6.1.4.1.2021.11.11.0', # OID para uso de CPU em alguns sistemas (Net-SNMP)
-        'Memória Total (kB)': '1.3.6.1.4.1.2021.4.5.0', # OID para memória total (Net-SNMP)
-        'Memória Livre (kB)': '1.3.6.1.4.1.2021.4.6.0', # OID para memória livre (Net-SNMP)
-    }
+    # Path to the OIDS configuration file
+    OIDS_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'snmp_oids.json')
+    OIDS = {} # Initialize as empty, will be loaded
+
+    def __init__(self):
+        # Load OIDS from the configuration file when an instance is created
+        # Or, for a static class, load once
+        if not SNMPHelper.OIDS: # Load only if not already loaded
+            self._load_oids_from_config()
+
+    @classmethod
+    def _load_oids_from_config(cls):
+        """Loads OIDs from the external JSON configuration file."""
+        try:
+            with open(cls.OIDS_CONFIG_FILE, 'r') as f:
+                loaded_oids = json.load(f)
+                # Convert lists back to tuples for MIB definitions if necessary,
+                # though pysnmp.ObjectIdentity usually handles lists for MIB objects fine.
+                cls.OIDS = {
+                    key: tuple(value) if isinstance(value, list) and len(value) == 3 and isinstance(value[0], str) else value
+                    for key, value in loaded_oids.items()
+                }
+            print(f"OIDs loaded from {cls.OIDS_CONFIG_FILE}")
+        except FileNotFoundError:
+            print(f"Error: OIDS configuration file not found at {cls.OIDS_CONFIG_FILE}. Using default (empty) OIDS.")
+            cls.OIDS = {}
+        except json.JSONDecodeError:
+            print(f"Error: Could not decode JSON from {cls.OIDS_CONFIG_FILE}. Check file format.")
+            cls.OIDS = {}
+        except Exception as e:
+            print(f"An unexpected error occurred while loading OIDs: {e}")
+            cls.OIDS = {}
+
+    # Ensure OIDs are loaded when the module is imported or class is accessed statically
+    # This approach ensures OIDs are loaded even if no instance is created.
+    _load_oids_from_config.__is_classmethod = True # Trick to call as class method directly
+    if not OIDS: # Load only once during module import
+        _load_oids_from_config(SNMPHelper)
+
 
     @staticmethod
-    def snmp_get(ip, community, oid):
-        """
-        Executa um comando snmpget para recuperar o valor de um OID específico de um host.
-        Requer que o 'snmpget' esteja instalado e disponível no PATH do sistema.
-        """
+    def snmp_get(ip, community, oid_or_mib_tuple):
         try:
-            # Executa o comando snmpget
-            result = subprocess.check_output(
-                ['snmpget', '-v1', '-c', community, ip, oid],
-                stderr=subprocess.STDOUT # Redireciona o erro padrão para a saída padrão
-            ).decode(errors='ignore') # Decodifica a saída, ignorando erros
+            if isinstance(oid_or_mib_tuple, (tuple, list)): # Accept both tuple and list for MIB
+                errorIndication, errorStatus, errorIndex, varBinds = next(
+                    getCmd(SnmpEngine(),
+                           CommunityData(community),
+                           UdpTransportTarget((ip, 161)),
+                           ContextData(),
+                           ObjectType(ObjectIdentity(oid_or_mib_tuple)))
+                )
+            else: # Must be a string OID
+                errorIndication, errorStatus, errorIndex, varBinds = next(
+                    getCmd(SnmpEngine(),
+                           CommunityData(community),
+                           UdpTransportTarget((ip, 161)),
+                           ContextData(),
+                           ObjectType(ObjectIdentity(oid_or_mib_tuple)))
+                )
 
-            # Tenta extrair o valor da saída do snmpget
-            match = re.search(r'=\s+\w+:\s+(.+)', result)
-            if match:
-                return match.group(1).strip() # Retorna o valor limpo
-            return result.strip() # Retorna a saída bruta se não houver correspondência
-        except Exception:
-            return None # Retorna None em caso de erro (ex: host não responde SNMP, OID não existe)
+            if errorIndication:
+                return None
+            elif errorStatus:
+                return None
+            else:
+                for varBind in varBinds:
+                    return str(varBind[1])
+        except Exception: # Broad exception, consider refining
+            return None
 
     @classmethod
     def get_all_info(cls, ip, community='public'):
-        """
-        Tenta coletar todas as informações SNMP definidas em OIDS para um determinado host.
-        A comunidade SNMP padrão é 'public'.
-        """
         info = {}
-        for desc, oid in cls.OIDS.items():
-            value = cls.snmp_get(ip, community, oid)
+        for desc, oid_data in cls.OIDS.items():
+            value = cls.snmp_get(ip, community, oid_data)
             if value:
-                info[desc] = value # Armazena o valor se for obtido com sucesso
+                info[desc] = value
         return info
