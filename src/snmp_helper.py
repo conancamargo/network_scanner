@@ -3,29 +3,20 @@ from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, 
 import os
 
 class SNMPHelper:
-    # Path to the OIDS configuration file
     OIDS_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'snmp_oids.json')
     OIDS = {} # Initialize as empty, will be loaded
 
-    def __init__(self):
-        # Load OIDS from the configuration file when an instance is created
-        # Or, for a static class, load once
-        if not SNMPHelper.OIDS: # Load only if not already loaded
-            self._load_oids_from_config()
-
+    # Load OIDs when the class is defined, ensuring it's done only once
     @classmethod
     def _load_oids_from_config(cls):
-        """Loads OIDs from the external JSON configuration file."""
         try:
             with open(cls.OIDS_CONFIG_FILE, 'r') as f:
                 loaded_oids = json.load(f)
-                # Convert lists back to tuples for MIB definitions if necessary,
-                # though pysnmp.ObjectIdentity usually handles lists for MIB objects fine.
                 cls.OIDS = {
                     key: tuple(value) if isinstance(value, list) and len(value) == 3 and isinstance(value[0], str) else value
                     for key, value in loaded_oids.items()
                 }
-            print(f"OIDs loaded from {cls.OIDS_CONFIG_FILE}")
+            # print(f"OIDs loaded from {cls.OIDS_CONFIG_FILE}") # Keep for debugging if needed
         except FileNotFoundError:
             print(f"Error: OIDS configuration file not found at {cls.OIDS_CONFIG_FILE}. Using default (empty) OIDS.")
             cls.OIDS = {}
@@ -36,17 +27,14 @@ class SNMPHelper:
             print(f"An unexpected error occurred while loading OIDs: {e}")
             cls.OIDS = {}
 
-    # Ensure OIDs are loaded when the module is imported or class is accessed statically
-    # This approach ensures OIDs are loaded even if no instance is created.
-    _load_oids_from_config.__is_classmethod = True # Trick to call as class method directly
-    if not OIDS: # Load only once during module import
-        _load_oids_from_config(SNMPHelper)
+    # Call the loading method immediately after the class is defined
+    _load_oids_from_config()
 
 
     @staticmethod
     def snmp_get(ip, community, oid_or_mib_tuple):
         try:
-            if isinstance(oid_or_mib_tuple, (tuple, list)): # Accept both tuple and list for MIB
+            if isinstance(oid_or_mib_tuple, (tuple, list)):
                 errorIndication, errorStatus, errorIndex, varBinds = next(
                     getCmd(SnmpEngine(),
                            CommunityData(community),
@@ -54,7 +42,7 @@ class SNMPHelper:
                            ContextData(),
                            ObjectType(ObjectIdentity(oid_or_mib_tuple)))
                 )
-            else: # Must be a string OID
+            else:
                 errorIndication, errorStatus, errorIndex, varBinds = next(
                     getCmd(SnmpEngine(),
                            CommunityData(community),
@@ -70,7 +58,7 @@ class SNMPHelper:
             else:
                 for varBind in varBinds:
                     return str(varBind[1])
-        except Exception: # Broad exception, consider refining
+        except Exception:
             return None
 
     @classmethod
